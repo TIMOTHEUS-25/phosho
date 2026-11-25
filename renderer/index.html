@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; style-src 'self'; script-src 'self'">
+  <title>PhoSho!</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="bar-left">
+      <button id="back" class="btn small ghost hidden" title="Back to the drop screen">← Back</button>
+      <div class="brand"><img src="assets/logo.png" alt=""><span>PhoSho!</span></div>
+    </div>
+    <div class="apps" id="apps"></div>
+  </header>
+
+  <!-- Empty state -->
+  <main id="drop" class="drop">
+    <div class="drop-inner">
+      <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+        <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11v6m-3-3 3 3 3-3"/>
+      </svg>
+      <h1>Drop an InDesign file here</h1>
+      <p>Each page becomes an artboard in one layered Photoshop file at 300 ppi, RGB.</p>
+      <button id="browse" class="btn">Choose file…</button>
+    </div>
+  </main>
+
+  <!-- Document loaded -->
+  <main id="doc" class="doc hidden">
+    <section class="left">
+      <div class="section-head">
+        <div>
+          <div class="doc-name" id="docName"></div>
+          <div class="muted" id="pageCount"></div>
+        </div>
+        <div class="seg">
+          <button id="selAll" class="link">All</button>
+          <button id="selNone" class="link">None</button>
+        </div>
+      </div>
+      <div class="grid" id="grid"></div>
+    </section>
+
+    <section class="right">
+      <div class="preview" id="preview"><div class="muted">Select a page</div></div>
+      <div class="preview-label" id="previewLabel"></div>
+
+      <div class="panel" id="linksPanel"></div>
+      <div class="panel" id="fontsPanel"></div>
+
+      <div class="out-row">
+        <div class="out-path" id="outPath" title=""></div>
+        <button id="changeOut" class="link">Change…</button>
+      </div>
+      <label class="check" title="Adds soft returns where InDesign breaks each line, so text wraps exactly the same. Text stays editable; untick to let Photoshop rewrap freely."><input type="checkbox" id="keepBreaks" checked> Keep InDesign's line breaks</label>
+      <label class="check"><input type="checkbox" id="openWhenDone" checked> Open in Photoshop when done</label>
+      <div class="actions">
+        <button id="another" class="btn ghost">Different file</button>
+        <button id="convert" class="btn primary">Convert</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Busy overlay -->
+  <div id="busy" class="overlay hidden">
+    <div class="card">
+      <div class="spinner"></div>
+      <div id="busyMsg">Working…</div>
+      <div class="progress"><div id="busyBar"></div></div>
+      <div class="muted small" id="busySub">InDesign and Photoshop are being driven in the background. Please don't use them until this finishes.</div>
+    </div>
+  </div>
+
+  <!-- Result -->
+  <div id="result" class="overlay hidden">
+    <div class="card wide">
+      <h2 id="resultTitle"></h2>
+      <div id="resultBody"></div>
+      <div class="actions">
+        <button id="resultNew" class="btn ghost hidden">Convert another file</button>
+        <button id="resultClose" class="btn ghost">Back</button>
+        <button id="resultReveal" class="btn primary">Show file</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

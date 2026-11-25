@@ -1,0 +1,79 @@
+{
+  "name": "phosho",
+  "productName": "PhoSho!",
+  "version": "1.0.0",
+  "description": "PhoSho! - drag-and-drop InDesign to layered Photoshop converter",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist": "electron-builder --mac --win"
+  },
+  "build": {
+    "appId": "com.local.phosho",
+    "productName": "PhoSho!",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**",
+      "renderer/**",
+      "jsx/**"
+    ],
+    "asarUnpack": [
+      "jsx/**"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "category": "public.app-category.graphics-design",
+      "extendInfo": {
+        "NSAppleEventsUsageDescription": "PhoSho! controls Adobe InDesign and Adobe Photoshop to convert your documents."
+      },
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon-win.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "PhoSho-Setup-${version}.${ext}",
+      "shortcutName": "PhoSho!"
+    },
+    "directories": {
+      "buildResources": "build"
+    },
+    "dmg": {
+      "artifactName": "PhoSho-${version}-${arch}.${ext}",
+      "title": "PhoSho!"
+    },
+    "portable": {
+      "artifactName": "PhoSho-${version}-portable.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.3.4",
+    "electron-builder": "^26.18.0"
+  }
+}
