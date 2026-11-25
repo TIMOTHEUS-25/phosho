@@ -762,6 +762,32 @@
         PDF_CROP[PDFCrop.CROP_CONTENT_VISIBLE_LAYERS] = 'boundingBox'; PDF_CROP[PDFCrop.CROP_CONTENT_ALL_LAYERS] = 'boundingBox';
     } catch (e) {}
 
+    // InDesign's Object Layer Options: which layers of a placed PSD/TIFF/PDF
+    // are shown for this one placement. Returns the layer tree (top to bottom,
+    // like Photoshop) only when something differs from the file as saved.
+    function layerVisibility(g) {
+        var changed = false;
+        function walk(coll) {
+            var out = [], items;
+            try { items = coll.everyItem().getElements(); } catch (e) { return out; }
+            for (var i = 0; i < items.length; i++) {
+                var gl = items[i], node = { name: String(gl.name), visible: !!gl.currentVisibility };
+                try { if (gl.currentVisibility != gl.originalVisibility) changed = true; } catch (e) {}
+                try { if (gl.graphicLayers.length) node.children = walk(gl.graphicLayers); } catch (e) {}
+                out.push(node);
+            }
+            return out;
+        }
+        var tree = [];
+        try { tree = walk(g.graphicLayerOptions.graphicLayers); } catch (e) { return null; }
+        return changed ? tree : null;
+    }
+    function visibleNames(tree) {
+        var out = [];
+        for (var i = 0; i < tree.length; i++) if (tree[i].visible) out.push(tree[i].name);
+        return out;
+    }
+
     function graphicFrameNodes(frame, g, ctx, type, hidden) {
         var out = [];
         var lk = null;
@@ -770,6 +796,15 @@
         var path = lk ? linkPath(lk) : '';
         var baseName = lk ? lk.name : itemName(frame, type);
         var canLink = (status === 'ok' || status === 'modified') && PS_LINKABLE.test(path) && new File(path).exists;
+        // Layers shown/hidden for this placement only (e.g. a product placed
+        // twice: one copy showing just its shadow, set to Multiply).
+        var layerVis = canLink ? layerVisibility(g) : null;
+        if (layerVis && !/\.(psd|psb|tif|tiff)$/i.test(path)) {
+            // Photoshop can't switch layers inside a placed PDF/AI/EPS, so use
+            // InDesign's own render of it, which shows the right layers.
+            canLink = false;
+            status = 'layers';
+        }
 
         // InDesign paints a frame's fill under its image and its stroke over it.
         var hasFill = false, hasStroke = false;
@@ -804,6 +839,11 @@
                          blend: firstBlend(gFx.blend, cFx.blend, objFx.blend), fx: imgFx };
             if (imgMask) node.mask = imgMask;
             if (userName(frame)) { node.name = userName(frame); node.userNamed = true; }
+            if (layerVis) {
+                node.layerVis = layerVis;
+                var shown = visibleNames(layerVis);
+                if (!node.userNamed && shown.length && shown.length <= 3) node.name = baseName + ' \u00b7 ' + shown.join(', ');
+            }
             try {
                 if (/\.(pdf|ai)$/i.test(path)) {
                     node.pdfPage = g.pdfAttributes.pageNumber;
@@ -821,9 +861,12 @@
         if (status === 'missing') why = 'missing link';
         else if (status === 'inaccessible') why = 'inaccessible link';
         else if (status === 'embedded') why = 'embedded';
+        else if (status === 'layers') why = 'layer visibility set in InDesign';
         out.push(rasterNode(frame, ctx, baseName + ' (' + why + ', rasterized)', hidden, why));
         if (status === 'missing' || status === 'inaccessible') {
             warn('"' + baseName + '" on page ' + ctx.page.name + ' has a ' + why + ', so it was rasterized into a smart object.');
+        } else if (status === 'layers') {
+            warn('"' + baseName + '" on page ' + ctx.page.name + ' shows only some of its layers (Object Layer Options). Photoshop can\'t switch layers inside a placed ' + path.replace(/^.*\./, '').toUpperCase() + ', so it was rasterized from InDesign with the same layers shown.');
         } else if (why === 'unsupported format') {
             warn('"' + baseName + '" on page ' + ctx.page.name + ' is a format Photoshop cannot link, so it was rasterized into a smart object.');
         }

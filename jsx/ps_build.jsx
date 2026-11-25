@@ -550,9 +550,44 @@
         catch (e2) { return { layer: layer, how: 'embedded', err: lastErr }; }
     }
 
+    // Show/hide layers inside the active embedded smart object, matching
+    // layers by name level by level (the nth "Shadow" matches the nth one).
+    function applyLayerVisibility(tree) {
+        var mainDoc = doc, missing = [];
+        executeAction(s('placedLayerEditContents'), new ActionDescriptor(), DialogModes.NO);
+        var inner = app.activeDocument;
+        try {
+            (function walk(layers, nodes) {
+                var seen = {};
+                for (var i = 0; i < nodes.length; i++) {
+                    var nd = nodes[i], want = seen[nd.name] = (seen[nd.name] || 0) + 1, hit = null, count = 0;
+                    for (var k = 0; k < layers.length && !hit; k++) if (layers[k].name === nd.name && ++count === want) hit = layers[k];
+                    if (!hit) { missing.push(nd.name); continue; }
+                    if (nd.children && hit.typename === 'LayerSet') walk(hit.layers, nd.children);
+                    hit.visible = nd.visible;
+                }
+            })(inner.layers, tree);
+        } finally {
+            inner.close(SaveOptions.SAVECHANGES);
+            app.activeDocument = mainDoc;
+        }
+        return missing;
+    }
+
     function placeImage(n, ox, oy, container) {
         var gm = frameGeometry(n.corners, ox, oy);
-        var r = placeLinkedRobust(n, container);
+        var r;
+        if (n.layerVis) {
+            // Photoshop can't show different layers per linked copy, so this
+            // placement is embedded (full file, all layers) with InDesign's
+            // layer choices applied inside it.
+            r = { layer: placeFile(n.path, false), how: 'layers' };
+            var missing = applyLayerVisibility(n.layerVis);
+            warn('"' + n.name + '" shows only some of its layers in InDesign (Object Layer Options). Photoshop can\'t do that per linked copy, so it was embedded with the same layers shown; all layers are still inside the smart object. Original file: ' + n.path);
+            if (missing.length) warn('In "' + n.name + '" these layers weren\'t found in the file, so their visibility could not be set: ' + missing.join(', ') + '.');
+        } else {
+            r = placeLinkedRobust(n, container);
+        }
         var q = soQuad(r.layer);
         transformActive(gm.cx - q.cx, gm.cy - q.cy, gm.w / q.w * 100, (gm.flip ? -1 : 1) * gm.h / q.h * 100, 0);
         shapeActive(gm, true);

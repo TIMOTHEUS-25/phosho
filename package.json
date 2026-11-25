@@ -1,7 +1,7 @@
 {
   "name": "phosho",
   "productName": "PhoSho!",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "PhoSho! - drag-and-drop InDesign to layered Photoshop converter",
   "main": "main.js",
   "scripts": {

@@ -30,6 +30,7 @@ On first use, macOS asks whether "PhoSho!" may control InDesign and Photoshop. C
 |---|---|
 | Text frame | **Live, editable text layer** with a **red** layer label, with the same font (by PostScript name), size, leading, tracking, colour, alignment, indents, paragraph spacing, caps, super/subscript, underline and strikethrough. Mixed styles inside a frame are kept. |
 | Linked image (PSD, TIFF, JPG, PNG, AI, PDF, EPS…) | **Linked Smart Object** pointing at the *same* file path (local disk or server), cropped by a vector mask that matches the frame's shape. |
+| Placed PSD or TIFF with some layers shown or hidden in **Object Layer Options** (for example a product placed twice: one copy showing only its shadow and set to Multiply, the other showing only the product) | The same layers shown and hidden, with the same blend mode. Photoshop can't show different layers on different copies of one linked file, so these copies become **embedded** smart objects containing every layer of the original. Toggle layers inside them any time. The result screen lists the original file path. Copies whose layers you didn't change stay linked. For a placed PDF, AI or EPS with layers switched, InDesign's render is used instead, because Photoshop can't switch those layers. |
 | Missing link that you didn't relink | Embedded smart object made from InDesign's preview. Use *Replace Contents* later. |
 | Embedded image | Embedded smart object |
 | Shapes, lines, frame fills and strokes | Embedded smart object (rasterized at 300 ppi) |
@@ -63,8 +64,8 @@ The app icon is generated from the artwork in `build/` (`icon.png` for macOS, `i
 ```bash
 npm install
 npm start            # run in development
-npm run dist:mac     # → dist/PhoSho-1.0.0-universal.dmg  (Apple Silicon + Intel)
-npm run dist:win     # → dist/PhoSho-Setup-1.0.0.exe  and dist/PhoSho-1.0.0-portable.exe
+npm run dist:mac     # → dist/PhoSho-1.0.1-universal.dmg  (Apple Silicon + Intel)
+npm run dist:win     # → dist/PhoSho-Setup-1.0.1.exe  and dist/PhoSho-1.0.1-portable.exe
 ```
 
 The builds are not code-signed:
@@ -79,4 +80,4 @@ The builds are not code-signed:
 - `jsx/ps_build.jsx` (runs in Photoshop): creates the artboards, live text layers, linked smart objects and vector masks, then saves the PSD.
 - `src/adobe.js` runs those scripts through AppleScript on macOS and COM/PowerShell on Windows.
 
-To test without the UI, run `node test/run_test.js` (sample) or `node test/run_layers.js` (stacking order across layers and groups), or `node test/run_effects.js` (effects, rotation, shear and flip; `test/make_effects.jsx` builds `test/effects.indd`), or `node test/run_masks.js` (masks, corners, feathers, pasted-inside, text placement, group names; built by `test/make_masks.jsx`). `node test/compare.js <file.indd> <file.psd> [pageIndex]` renders the InDesign page and the PSD artboard side by side with a difference map in `test/out/` (set `CMP_RES=300` for full resolution) against `test/sample.indd`. `test/make_sample.jsx` rebuilds that sample document.
+To test without the UI, run `node test/run_test.js` (sample) or `node test/run_layers.js` (stacking order across layers and groups), or `node test/run_effects.js` (effects, rotation, shear and flip; `test/make_effects.jsx` builds `test/effects.indd`), or `node test/run_psdlayers.js` (Object Layer Options: the product-and-shadow set-up; `test/make_product.jsx` builds the PSD in Photoshop and `test/make_psdlayers.jsx` builds the InDesign file), or `node test/run_masks.js` (masks, corners, feathers, pasted-inside, text placement, group names; built by `test/make_masks.jsx`). `node test/compare.js <file.indd> <file.psd> [pageIndex]` renders the InDesign page and the PSD artboard side by side with a difference map in `test/out/` (set `CMP_RES=300` for full resolution) against `test/sample.indd`. `test/make_sample.jsx` rebuilds that sample document.
