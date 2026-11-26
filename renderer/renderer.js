@@ -138,6 +138,8 @@ function renderDoc() {
   renderPreview();
   renderLinks();
   renderFonts();
+  renderColours();
+  renderSize();
   renderOut();
 }
 
@@ -153,6 +155,7 @@ function renderGrid() {
       <div class="label">Page ${esc(p.name)}</div>
     </div>`).join('');
   $('convert').disabled = state.selected.size === 0;
+  if (typeof renderSize === 'function') renderSize();
   $('convert').textContent = state.selected.size > 1 ? `Convert ${state.selected.size} pages` : 'Convert';
 }
 
@@ -273,7 +276,7 @@ function renderOut() {
 }
 $('changeOut').onclick = async () => {
   const p = await api.saveAs(state.outPath);
-  if (p) { state.outPath = /\.psd$/i.test(p) ? p : p + '.psd'; renderOut(); }
+  if (p) { state.outPath = /\.ps[db]$/i.test(p) ? p : p + '.psd'; renderOut(); }
 };
 
 // ---------- convert ----------
@@ -285,9 +288,22 @@ $('convert').onclick = async () => {
   }));
   busy(true, 'Starting…');
   try {
-    const r = await api.convert({ pageIndexes, relinks, outPath: state.outPath, openWhenDone: $('openWhenDone').checked, lockLines: $('keepBreaks').checked });
-    let html = `<p>${r.layers} layers across ${pageIndexes.length} artboard${pageIndexes.length === 1 ? '' : 's'}.</p>
+    const colourProfile = selectedProfile();
+    const size = sizeSettings();
+    if (size.error) { busy(false); return showResult('Check the size', `<p>${esc(size.error)}</p>`); }
+    const r = await api.convert({
+      pageIndexes, relinks, outPath: state.outPath, openWhenDone: $('openWhenDone').checked, lockLines: $('keepBreaks').checked,
+      colourProfile: colourProfile ? { name: colourProfile.name, colors: colourProfile.colors } : null,
+      scale: size.scale, scaleBy: size.scaleBy,
+    });
+    let html = (size.scale < 1 ? `<p>Resized in Photoshop to ${esc(size.label)}.</p>` : '') + `<p>${r.layers} layers across ${pageIndexes.length} artboard${pageIndexes.length === 1 ? '' : 's'}.</p>
       <div class="result-path">${esc(r.outPath)}</div>`;
+    if (r.colourProfile) {
+      const n = r.colourProfile.applied.length;
+      html += n
+        ? `<p><b>Brand RGB values from “${esc(r.colourProfile.name)}”</b> used for ${n} colour${n === 1 ? '' : 's'}: ${esc(r.colourProfile.applied.join(', '))}.</p>`
+        : `<p>No colours in this document matched “${esc(r.colourProfile.name)}”, so the standard conversion was used.</p>`;
+    }
     if (r.missingFonts.length) {
       html += `<p><b>Fonts Photoshop doesn't have</b> (substituted until installed):</p>
         <ul class="result-list">${r.missingFonts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>`;
@@ -303,4 +319,349 @@ $('convert').onclick = async () => {
   }
 };
 
+// ---------- colour profiles ----------
+// Profiles map a brand's CMYK colours to its official RGB values. The match
+// rule here mirrors profileMatch() in jsx/id_common.jsx: same CMYK in whole
+// percentages, else same swatch name; colours already in RGB are left alone.
+const STANDARD = '';
+let store = { selected: null, profiles: [] };
+
+const hex = (rgb) => '#' + rgb.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('').toUpperCase();
+function hexToRgb(s) {
+  const m = String(s || '').trim().replace(/^#/, '').match(/^([0-9a-f]{6}|[0-9a-f]{3})$/i);
+  if (!m) return null;
+  const h = m[1].length === 3 ? m[1].split('').map((x) => x + x).join('') : m[1];
+  return [0, 2, 4].map((i) => parseInt(h.substr(i, 2), 16));
+}
+const cmykKey = (v) => v.map((x) => Math.round(Number(x))).join(',');
+const normName = (n) => String(n || '').trim().toLowerCase();
+const fmtCmyk = (v) => `C${Math.round(v[0])} M${Math.round(v[1])} Y${Math.round(v[2])} K${Math.round(v[3])}`;
+const fmtRgb = (v) => `R${v[0]} G${v[1]} B${v[2]}`;
+// Chip colours are set through the CSSOM (inline style attributes are blocked by the CSP).
+function paintChips(root) { root.querySelectorAll('[data-chip]').forEach((el) => { el.style.background = el.dataset.chip; }); }
+
+function selectedProfile() { return store.profiles.find((p) => p.id === store.selected) || null; }
+
+function matchColour(profile, col) {
+  if (col.space === 'rgb') return null;
+  if (col.space === 'cmyk') {
+    const k = cmykKey(col.value);
+    const hit = profile.colors.find((e) => e.cmyk && cmykKey(e.cmyk) === k);
+    if (hit) return hit;
+  }
+  const n = normName(col.name);
+  return (n && profile.colors.find((e) => normName(e.name) === n)) || null;
+}
+
+// The document's colours, without duplicates: InDesign keeps unnamed copies
+// of colours, which add nothing when a named swatch has the same values.
+function docColours() {
+  if (!state.doc || !state.doc.colors) return [];
+  const key = (c) => c.space + '|' + c.value.join(',');
+  const named = new Set(state.doc.colors.filter((c) => c.name).map(key));
+  const seen = new Set();
+  return state.doc.colors.filter((c) => {
+    if (!c.name && named.has(key(c))) return false;
+    const k = (c.name || '') + '|' + key(c);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+function renderProfileSelect() {
+  const sel = $('colourProfile');
+  sel.innerHTML = `<option value="${STANDARD}">Standard conversion</option>` +
+    store.profiles.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} (${p.colors.length} colour${p.colors.length === 1 ? '' : 's'})</option>`).join('');
+  sel.value = store.selected || STANDARD;
+}
+
+function renderColours() {
+  const panel = $('coloursPanel');
+  const prof = selectedProfile();
+  if (!prof || !state.doc) { panel.classList.add('hidden'); return; }
+  const cols = docColours().filter((c) => c.space !== 'rgb');
+  const matched = [], unmatched = [];
+  for (const c of cols) { const m = matchColour(prof, c); (m ? matched : unmatched).push({ c, m }); }
+  panel.classList.remove('hidden');
+  panel.className = 'panel' + (matched.length ? ' good' : '');
+  const row = ({ c, m }) => `<div class="colour-row" title="${esc(c.name || 'Unnamed colour')}: standard ${esc(hex(c.rgb || [0, 0, 0]))} → brand ${esc(hex(m.rgb))}">
+      <span class="chip" data-chip="${hex(c.rgb || [0, 0, 0])}"></span><span class="arrow">→</span><span class="chip" data-chip="${hex(m.rgb)}"></span>
+      <span class="cname">${esc(c.name || 'Unnamed colour')}</span>
+      <span class="vals">${c.space === 'cmyk' ? esc(fmtCmyk(c.value)) + ' → ' : ''}${esc(fmtRgb(m.rgb))}</span>
+    </div>`;
+  panel.innerHTML = `<h3>${matched.length ? `${matched.length} brand colour${matched.length === 1 ? '' : 's'} matched` : 'No brand colours matched'}</h3>
+    ${matched.map(row).join('')}
+    <div class="muted small note">${unmatched.length
+      ? `${unmatched.length} other CMYK colour${unmatched.length === 1 ? '' : 's'} in this document ${unmatched.length === 1 ? 'isn\'t' : 'aren\'t'} in “${esc(prof.name)}” and use${unmatched.length === 1 ? 's' : ''} the standard conversion. `
+      : ''}Placed images keep the colours inside their own files.</div>`;
+  paintChips(panel);
+}
+
+async function loadProfiles() {
+  try { store = await api.profiles.load(); } catch { store = { selected: null, profiles: [] }; }
+  renderProfileSelect();
+}
+
+$('colourProfile').onchange = async () => {
+  store.selected = $('colourProfile').value || null;
+  try { store = await api.profiles.save(store); } catch (e) { showError(e); }
+  renderColours();
+};
+
+// ---------- profile editor ----------
+// Edits a draft copy; nothing is stored until Save.
+const ed = { draft: null, current: null };
+const clone = (v) => JSON.parse(JSON.stringify(v));
+const newId = () => Math.random().toString(16).slice(2, 14);
+const blankRow = () => ({ name: '', cmyk: ['', '', '', ''], rgb: ['', '', ''] });
+
+function edProfile() { return ed.draft.profiles.find((p) => p.id === ed.current) || null; }
+
+function openEditor() {
+  ed.draft = clone(store);
+  for (const p of ed.draft.profiles) p.colors = p.colors.map((c) => ({ name: c.name, cmyk: c.cmyk ? c.cmyk.slice() : ['', '', '', ''], rgb: c.rgb.slice() }));
+  ed.current = store.selected || (ed.draft.profiles[0] && ed.draft.profiles[0].id) || null;
+  if (!ed.current) newProfile(false);
+  $('pfError').classList.add('hidden');
+  renderEditor();
+  $('profiles').classList.remove('hidden');
+}
+function closeEditor() { $('profiles').classList.add('hidden'); ed.draft = null; }
+
+function newProfile(render = true, name = 'New profile', colors = []) {
+  const p = { id: newId(), name, colors };
+  ed.draft.profiles.push(p);
+  ed.current = p.id;
+  if (render) renderEditor();
+  return p;
+}
+
+function renderEditor() {
+  const p = edProfile();
+  $('pfError').classList.add('hidden');
+  $('pfSelect').innerHTML = ed.draft.profiles.map((x) => `<option value="${esc(x.id)}">${esc(x.name || 'Untitled profile')}</option>`).join('');
+  $('pfSelect').value = ed.current;
+  $('pfName').value = p ? p.name : '';
+  $('pfDelete').disabled = !p;
+  $('pfFromDoc').classList.toggle('hidden', !state.doc);
+  const rows = p ? p.colors : [];
+  $('pfEmpty').textContent = rows.length ? '' : 'No colours yet. Add them one by one, import a CSV from the brand guide, or start from this document\'s colours.';
+  const num = (i, k, j, v, max, cls = '') => `<td class="${cls}"><input type="number" min="0" max="${max}" step="any" data-i="${i}" data-k="${k}" data-j="${j}" value="${esc(v)}" aria-label="${k === 'cmyk' ? 'CMYK'[j] : 'RGB'[j]}"></td>`;
+  $('pfRows').innerHTML = rows.map((c, i) => {
+    const rgbOk = c.rgb.every((v) => v !== '' && Number.isFinite(Number(v)));
+    return `<tr>
+      <td><span class="chip" data-chip="${rgbOk ? hex(c.rgb.map(Number)) : 'transparent'}" data-row-chip="${i}"></span></td>
+      <td><input type="text" data-i="${i}" data-k="name" value="${esc(c.name)}" placeholder="e.g. Brand Red" aria-label="Swatch name"></td>
+      ${c.cmyk.map((v, j) => num(i, 'cmyk', j, v, 100)).join('')}
+      ${c.rgb.map((v, j) => num(i, 'rgb', j, v, 255, j === 0 ? 'gap' : '')).join('')}
+      <td><input type="text" class="hex" data-i="${i}" data-k="hex" value="${rgbOk ? hex(c.rgb.map(Number)) : ''}" placeholder="#RRGGBB" aria-label="Hex"></td>
+      <td><button class="link del" data-del="${i}" title="Remove this colour" aria-label="Remove">×</button></td>
+    </tr>`;
+  }).join('');
+  paintChips($('pfRows'));
+}
+
+$('pfRows').addEventListener('input', (e) => {
+  const t = e.target, p = edProfile();
+  if (!p || t.dataset.i === undefined) return;
+  const i = Number(t.dataset.i), c = p.colors[i], k = t.dataset.k;
+  t.classList.remove('bad');
+  if (k === 'name') c.name = t.value;
+  else if (k === 'cmyk') c.cmyk[Number(t.dataset.j)] = t.value;
+  else if (k === 'rgb') {
+    c.rgb[Number(t.dataset.j)] = t.value;
+    const ok = c.rgb.every((v) => v !== '' && Number.isFinite(Number(v)));
+    $('pfRows').querySelector(`input[data-i="${i}"][data-k="hex"]`).value = ok ? hex(c.rgb.map(Number)) : '';
+  } else if (k === 'hex') {
+    const rgb = hexToRgb(t.value);
+    if (rgb) {
+      c.rgb = rgb.map(String);
+      rgb.forEach((v, j) => { $('pfRows').querySelector(`input[data-i="${i}"][data-k="rgb"][data-j="${j}"]`).value = v; });
+    }
+  }
+  const ok = c.rgb.every((v) => v !== '' && Number.isFinite(Number(v)));
+  const chip = $('pfRows').querySelector(`[data-row-chip="${i}"]`);
+  chip.style.background = ok ? hex(c.rgb.map(Number)) : 'transparent';
+});
+$('pfRows').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-del]');
+  if (!b) return;
+  edProfile().colors.splice(Number(b.dataset.del), 1);
+  renderEditor();
+});
+
+$('pfSelect').onchange = () => { ed.current = $('pfSelect').value; renderEditor(); };
+$('pfName').oninput = () => {
+  const p = edProfile();
+  if (!p) return;
+  p.name = $('pfName').value;
+  const o = $('pfSelect').selectedOptions[0];
+  if (o) o.textContent = p.name || 'Untitled profile';
+};
+$('pfNew').onclick = () => { newProfile(); $('pfName').select(); };
+$('pfDelete').onclick = () => {
+  const p = edProfile();
+  if (!p || !confirm(`Delete the colour profile “${p.name || 'Untitled profile'}”?`)) return;
+  ed.draft.profiles = ed.draft.profiles.filter((x) => x.id !== p.id);
+  ed.current = ed.draft.profiles[0] ? ed.draft.profiles[0].id : null;
+  if (!ed.current) newProfile(false);
+  renderEditor();
+};
+$('pfAdd').onclick = () => {
+  edProfile().colors.push(blankRow());
+  renderEditor();
+  const last = $('pfRows').querySelector('tr:last-child input');
+  if (last) last.focus();
+};
+// Start from the document's CMYK and spot colours, with InDesign's standard
+// RGB filled in, ready to be overwritten with the brand guide's values.
+$('pfFromDoc').onclick = () => {
+  const p = edProfile();
+  let added = 0;
+  for (const c of docColours()) {
+    if (c.space === 'rgb') continue;
+    const probe = { colors: p.colors.filter((x) => x.rgb.every((v) => v !== '')).map((x) => ({ ...x, cmyk: x.cmyk.every((v) => v !== '') ? x.cmyk : null })) };
+    if (matchColour(probe, c)) continue;
+    p.colors.push({ name: c.name, cmyk: c.space === 'cmyk' ? c.value.map((v) => String(Math.round(v * 100) / 100)) : ['', '', '', ''], rgb: (c.rgb || [0, 0, 0]).map(String) });
+    added++;
+  }
+  renderEditor();
+  if (!added) { $('pfError').textContent = 'All of this document\'s CMYK colours are already in this profile.'; $('pfError').classList.remove('hidden'); }
+};
+$('pfImport').onclick = async () => {
+  try {
+    const r = await api.profiles.importCsv();
+    if (!r) return;
+    if (!r.colors.length) { $('pfError').textContent = 'No colours found in that file. It needs a header row with Name, C, M, Y, K and R, G, B (or Hex) columns.'; $('pfError').classList.remove('hidden'); return; }
+    const rows = r.colors.map((c) => ({ name: c.name, cmyk: c.cmyk ? c.cmyk.map(String) : ['', '', '', ''], rgb: c.rgb.map(String) }));
+    const p = edProfile();
+    if (p && !p.colors.length) { p.colors = rows; if (/^(New profile|Untitled profile|)$/.test(p.name.trim())) p.name = r.name; }
+    else newProfile(false, r.name, rows);
+    $('pfError').classList.add('hidden');
+    renderEditor();
+  } catch (e) { showError(e); }
+};
+$('pfExport').onclick = async () => {
+  const p = edProfile();
+  const v = validateProfile(p);
+  if (!v) return;
+  try { await api.profiles.exportCsv(v); } catch (e) { showError(e); }
+};
+
+// Returns the profile in stored form, or null after marking what's wrong.
+function validateProfile(p) {
+  const out = { id: p.id, name: (p.name || '').trim() || 'Untitled profile', colors: [] };
+  let bad = null;
+  p.colors.forEach((c, i) => {
+    const filled = (a) => a.filter((v) => String(v).trim() !== '').length;
+    const empty = !c.name.trim() && !filled(c.cmyk) && !filled(c.rgb);
+    if (empty) return;
+    const mark = (sel, msg) => { $('pfRows').querySelectorAll(sel).forEach((el) => el.classList.add('bad')); if (!bad) bad = msg; };
+    const nc = filled(c.cmyk), nr = filled(c.rgb);
+    const inRange = (a, max) => a.every((v) => Number(v) >= 0 && Number(v) <= max);
+    if (nc && (nc < 4 || !inRange(c.cmyk, 100))) mark(`input[data-i="${i}"][data-k="cmyk"]`, `Row ${i + 1}: enter all four CMYK values (0–100), or leave them all empty to match by swatch name.`);
+    if (nr < 3 || !inRange(c.rgb, 255)) mark(`input[data-i="${i}"][data-k="rgb"], input[data-i="${i}"][data-k="hex"]`, `Row ${i + 1}: enter the brand's R, G and B values (0–255) or a hex code.`);
+    if (!nc && !c.name.trim()) mark(`input[data-i="${i}"][data-k="name"]`, `Row ${i + 1}: give a swatch name or CMYK values to match.`);
+    out.colors.push({ name: c.name.trim(), cmyk: nc === 4 ? c.cmyk.map(Number) : null, rgb: c.rgb.map(Number) });
+  });
+  if (bad) { $('pfError').textContent = bad; $('pfError').classList.remove('hidden'); return null; }
+  return out;
+}
+
+$('pfSave').onclick = async () => {
+  const viewing = ed.current, profiles = [];
+  for (const p of ed.draft.profiles) {
+    if (ed.current !== p.id) { ed.current = p.id; renderEditor(); }
+    const v = validateProfile(p);
+    if (!v) return; // stays on the profile with the problem, marked
+    if (v.colors.length || (p.name.trim() && p.name.trim() !== 'New profile')) profiles.push(v);
+  }
+  ed.current = viewing;
+  const keep = profiles.some((p) => p.id === viewing) ? viewing : (profiles.some((p) => p.id === store.selected) ? store.selected : null);
+  try {
+    store = await api.profiles.save({ selected: keep, profiles });
+    closeEditor();
+    renderProfileSelect();
+    renderColours();
+  } catch (e) { showError(e); }
+};
+$('pfCancel').onclick = closeEditor;
+$('manageProfiles').onclick = openEditor;
+
+// ---------- size ----------
+// Shrinks the finished PSD in Photoshop: by a percentage, or to a width or
+// height in pixels (the other side follows the aspect ratio). The factor is
+// worked out from the largest selected page, so that page lands on the exact
+// size and other pages scale by the same amount. Never enlarges.
+const FULL_PPI = 300;
+const fullPx = (pt) => Math.round(pt * FULL_PPI / 72);
+const SIZE_KEY = 'phosho.size';
+
+function sizePages() {
+  const d = state.doc;
+  if (!d) return [];
+  const sel = [...state.selected].map((i) => d.pages[i]).filter(Boolean);
+  return sel.length ? sel : [d.pages[state.focus] || d.pages[0]].filter(Boolean);
+}
+
+// { scale, scaleBy, label, info, error }
+function sizeSettings() {
+  const mode = $('sizeMode').value;
+  const pages = sizePages();
+  const dim = $('sizeDim').value;
+  // the page that sets the size: the largest one along the side being set
+  const ref = pages.reduce((a, p) => (!a || (dim === 'height' ? p.height > a.height : p.width > a.width) ? p : a), null);
+  const out = { scale: 1, scaleBy: dim, label: 'full size', info: '', error: '' };
+  if (!ref) return out;
+  const fw = fullPx(ref.width), fh = fullPx(ref.height);
+  if (mode === 'percent') {
+    const v = Number($('sizePercent').value);
+    if (!(v > 0 && v <= 100)) { out.error = 'Enter a percentage between 1 and 100.'; return out; }
+    out.scale = v / 100;
+    out.scaleBy = fw >= fh ? 'width' : 'height';
+  } else if (mode === 'pixels') {
+    const v = Math.round(Number($('sizePx').value));
+    const full = dim === 'height' ? fh : fw;
+    if (!(v >= 1)) { out.error = `Enter the ${dim} in pixels.`; return out; }
+    if (v > full) { out.error = `${v} px is bigger than full size (${full} px ${dim}). The size option only makes artwork smaller.`; return out; }
+    out.scale = v / full;
+  }
+  const w = Math.max(1, Math.round(fw * out.scale)), h = Math.max(1, Math.round(fh * out.scale));
+  const ppi = Math.round(FULL_PPI * out.scale * 10) / 10;
+  out.label = out.scale < 1 ? `${w} × ${h} px (${Math.round(out.scale * 1000) / 10}%, ${ppi} ppi)` : 'full size';
+  const many = pages.length > 1 && pages.some((p) => p.width !== ref.width || p.height !== ref.height);
+  out.info = out.scale < 1
+    ? `Page ${esc(ref.name)}: ${fw} × ${fh} px → <b>${w} × ${h} px</b> at ${ppi} ppi. Text keeps its InDesign point sizes.${many ? ' Set from the largest selected page; the others shrink by the same amount.' : ''}`
+    : `Page ${esc(ref.name)}: <b>${fw} × ${fh} px</b> at ${FULL_PPI} ppi.`;
+  return out;
+}
+
+function renderSize() {
+  const mode = $('sizeMode').value;
+  $('sizePercentRow').classList.toggle('hidden', mode !== 'percent');
+  $('sizePixelsRow').classList.toggle('hidden', mode !== 'pixels');
+  if (!state.doc) return;
+  const s = sizeSettings();
+  $('sizePercent').classList.toggle('bad', mode === 'percent' && !!s.error);
+  $('sizePx').classList.toggle('bad', mode === 'pixels' && !!s.error);
+  $('sizeInfo').innerHTML = s.error ? `<span class="warn-text">${esc(s.error)}</span>` : s.info;
+}
+
+function saveSize() {
+  try {
+    localStorage.setItem(SIZE_KEY, JSON.stringify({ mode: $('sizeMode').value, percent: $('sizePercent').value, dim: $('sizeDim').value, px: $('sizePx').value }));
+  } catch {}
+}
+(function loadSize() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SIZE_KEY) || 'null');
+    if (v) { $('sizeMode').value = v.mode || 'full'; $('sizePercent').value = v.percent || 50; $('sizeDim').value = v.dim || 'width'; $('sizePx').value = v.px || 1080; }
+  } catch {}
+  renderSize();
+})();
+['sizeMode', 'sizeDim'].forEach((id) => { $(id).onchange = () => { renderSize(); saveSize(); }; });
+['sizePercent', 'sizePx'].forEach((id) => { $(id).oninput = () => { renderSize(); saveSize(); }; });
+
+loadProfiles();
 showApps();

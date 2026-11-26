@@ -50,6 +50,34 @@
       <div class="panel" id="linksPanel"></div>
       <div class="panel" id="fontsPanel"></div>
 
+      <div class="field">
+        <label for="colourProfile">Colour profile <span class="muted">(RGB values from CMYK)</span></label>
+        <div class="field-row">
+          <select id="colourProfile"></select>
+          <button id="manageProfiles" class="btn small">Edit profiles…</button>
+        </div>
+      </div>
+      <div class="panel hidden" id="coloursPanel"></div>
+
+      <div class="field">
+        <label for="sizeMode">Size</label>
+        <div class="field-row">
+          <select id="sizeMode">
+            <option value="full">Full size (300 ppi)</option>
+            <option value="percent">Reduce by percentage</option>
+            <option value="pixels">Set pixel size</option>
+          </select>
+        </div>
+        <div class="field-row hidden" id="sizePercentRow">
+          <input type="number" id="sizePercent" min="1" max="100" step="any" value="50" aria-label="Percentage of full size"><span class="unit">% of full size</span>
+        </div>
+        <div class="field-row hidden" id="sizePixelsRow">
+          <select id="sizeDim" aria-label="Side to set"><option value="width">Width</option><option value="height">Height</option></select>
+          <input type="number" id="sizePx" min="1" step="1" value="1080" aria-label="Pixels"><span class="unit">px</span>
+        </div>
+        <div class="muted small" id="sizeInfo"></div>
+      </div>
+
       <div class="out-row">
         <div class="out-path" id="outPath" title=""></div>
         <button id="changeOut" class="link">Change…</button>
@@ -82,6 +110,39 @@
         <button id="resultNew" class="btn ghost hidden">Convert another file</button>
         <button id="resultClose" class="btn ghost">Back</button>
         <button id="resultReveal" class="btn primary">Show file</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Colour profile editor -->
+  <div id="profiles" class="overlay hidden">
+    <div class="card editor">
+      <h2>Colour profiles</h2>
+      <p class="muted small intro">List a brand's CMYK colours with its official RGB values. Any colour in the InDesign document with the same CMYK values (or the same swatch name, handy for Pantone spot colours) uses the brand RGB value instead of the standard CMYK → RGB conversion.</p>
+      <div class="editor-head">
+        <select id="pfSelect" aria-label="Profile"></select>
+        <input id="pfName" type="text" placeholder="Profile name, e.g. Acme CI" aria-label="Profile name">
+        <button id="pfNew" class="btn small">New profile</button>
+        <button id="pfDelete" class="btn small ghost">Delete</button>
+      </div>
+      <div class="pf-table-wrap">
+        <table class="pf-table">
+          <thead><tr><th></th><th class="name">Swatch name</th><th>C</th><th>M</th><th>Y</th><th>K</th><th class="gap">R</th><th>G</th><th>B</th><th>Hex</th><th></th></tr></thead>
+          <tbody id="pfRows"></tbody>
+        </table>
+        <div id="pfEmpty" class="muted pf-empty"></div>
+      </div>
+      <div class="pf-tools">
+        <button id="pfAdd" class="link">+ Add colour</button>
+        <button id="pfFromDoc" class="link">+ Add this document's colours</button>
+        <span class="spacer"></span>
+        <button id="pfImport" class="link">Import CSV…</button>
+        <button id="pfExport" class="link">Export CSV…</button>
+      </div>
+      <div id="pfError" class="error small hidden"></div>
+      <div class="actions">
+        <button id="pfCancel" class="btn ghost">Cancel</button>
+        <button id="pfSave" class="btn primary">Save</button>
       </div>
     </div>
   </div>

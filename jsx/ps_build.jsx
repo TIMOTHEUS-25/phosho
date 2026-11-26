@@ -679,12 +679,46 @@
         tick('Building layers');
     }
 
+    // ---------- size & save ----------
+    // Image Size with resampling, by width or height (the other side follows),
+    // with layer styles scaled along.
+    function resampleDoc(key, px) {
+        var d = new ActionDescriptor();
+        d.putUnitDouble(c(key), c('#Pxl'), px);
+        d.putBoolean(s('scaleStyles'), true);
+        d.putBoolean(c('CnsP'), true);
+        d.putEnumerated(c('Intr'), c('Intp'), s('bicubicAutomatic'));
+        executeAction(c('ImgS'), d, DialogModes.NO);
+    }
+
+    function psbPath(p) { return /\.ps[db]$/i.test(p) ? p.replace(/\.ps[db]$/i, '.psb') : p + '.psb'; }
+
+    function savePsd(out) {
+        var opts = new PhotoshopSaveOptions();
+        opts.layers = true;
+        opts.embedColorProfile = true;
+        opts.alphaChannels = true;
+        doc.saveAs(new File(out), opts, false, Extension.LOWERCASE);
+    }
+
+    function savePsb(out) {
+        out = psbPath(out);
+        var sd = new ActionDescriptor(), so = new ActionDescriptor();
+        so.putBoolean(s('maximizeCompatibility'), true);
+        sd.putObject(c('As  '), c('Pht8'), so);
+        sd.putPath(c('In  '), new File(out));
+        sd.putBoolean(c('LwCs'), true);
+        executeAction(c('save'), sd, DialogModes.NO);
+        return out;
+    }
+
     var prevUnits = app.preferences.rulerUnits, prevType = app.preferences.typeUnits, prevDialogs = app.displayDialogs;
     try {
         app.displayDialogs = DialogModes.NO;
         for (var od = 0; od < app.documents.length; od++) {
             try {
-                if (app.documents[od].fullName.fsName === new File(PARAMS.outPath).fsName)
+                var openName = app.documents[od].fullName.fsName;
+                if (openName === new File(PARAMS.outPath).fsName || openName === new File(psbPath(PARAMS.outPath)).fsName)
                     throw new Error('"' + app.documents[od].name + '" is open in Photoshop. Close it, or choose a different file name.');
             } catch (e) { if (/is open in Photoshop/.test(e.message)) throw e; }
         }
@@ -739,25 +773,35 @@
             }
         } catch (e) {}
 
-        doc.resizeImage(undefined, undefined, PARAMS.dpi, ResampleMethod.NONE);
+        // Size: PARAMS.scale (0 < scale <= 1) shrinks the finished artwork in
+        // Photoshop. The ppi drops by the same factor, so the print size and
+        // text point sizes stay as in InDesign while the pixel count shrinks.
+        var scale = Number(PARAMS.scale) || 1;
+        if (!(scale > 0 && scale < 1)) scale = 1;
+        doc.resizeImage(undefined, undefined, PARAMS.dpi * scale, ResampleMethod.NONE);
+        if (scale < 1) {
+            progress('photoshop', totalNodes, totalNodes, 'Resizing to ' + Math.round(scale * 1000) / 10 + '%');
+            resampleDoc(PARAMS.scaleBy === 'height' ? 'Hght' : 'Wdth', Math.max(1, Math.round((PARAMS.scaleBy === 'height' ? H : W) * scale)));
+        }
 
         progress('photoshop', totalNodes, totalNodes, 'Saving');
-        var big = W > 30000 || H > 30000;
+        var dw = doc.width.as('px'), dh = doc.height.as('px');
         var out = PARAMS.outPath;
-        if (big) {
-            out = out.replace(/\.psd$/i, '.psb');
-            var sd = new ActionDescriptor(), so = new ActionDescriptor();
-            so.putBoolean(s('maximizeCompatibility'), true);
-            sd.putObject(c('As  '), c('Pht8'), so);
-            sd.putPath(c('In  '), new File(out));
-            sd.putBoolean(c('LwCs'), true);
-            executeAction(c('save'), sd, DialogModes.NO);
+        if (/\.psb$/i.test(out) || dw > 30000 || dh > 30000) {
+            out = savePsb(out);
         } else {
-            var opts = new PhotoshopSaveOptions();
-            opts.layers = true;
-            opts.embedColorProfile = true;
-            opts.alphaChannels = true;
-            doc.saveAs(new File(out), opts, false, Extension.LOWERCASE);
+            try {
+                if (PARAMS.simulateSaveFail) throw new Error('Could not save as "' + new File(out).name + '" because the file is too big.');
+                savePsd(out);
+            } catch (e) {
+                // PSD tops out at 2 GB and 30,000 px; PSB doesn't. Try that before giving up.
+                try {
+                    var alt = psbPath(out), base = alt.replace(/\.psb$/i, '');
+                    for (var n = 2; new File(alt).exists && n < 1000; n++) alt = base + ' ' + n + '.psb'; // don't overwrite an existing PSB
+                    out = savePsb(alt);
+                } catch (e2) { throw new Error('Could not save the PSD (' + errText(e) + ') or a PSB instead (' + errText(e2) + ').'); }
+                warn('Photoshop couldn\'t save it as a PSD (' + String(e.message || e).replace(/\s+/g, ' ') + '), so it was saved as a PSB, Photoshop\'s large-document format, instead.');
+            }
         }
         res.outPath = out;
         if (!PARAMS.openWhenDone) doc.close(SaveOptions.DONOTSAVECHANGES);

@@ -1,6 +1,6 @@
 // InDesign: open document, render page thumbnails, list links and fonts.
 (function () {
-    var res = { ok: false, pages: [], links: [], fonts: [], warnings: [] };
+    var res = { ok: false, pages: [], links: [], fonts: [], colors: [], warnings: [] };
     var doc = null;
     try {
         doc = idOpen(PARAMS.docPath);
@@ -49,6 +49,23 @@
         var fonts = doc.fonts.everyItem().getElements();
         for (var f = 0; f < fonts.length; f++) {
             try { res.fonts.push(fontInfo(fonts[f])); } catch (e) {}
+        }
+        // Document colours (named swatches and unnamed colours) with InDesign's
+        // standard RGB conversion, for the colour-profile panel and editor.
+        var cols = doc.colors.everyItem().getElements();
+        for (var ci = 0; ci < cols.length; ci++) {
+            try {
+                var c = cols[ci];
+                if (c.constructor.name !== 'Color' || /^(None|Paper|Registration)$/.test(c.name) || c.model == ColorModel.REGISTRATION) continue;
+                // (if/else: ExtendScript misreads chained ?: on enum comparisons)
+                var space = c.space, sp = 'other';
+                if (space == ColorSpace.CMYK) sp = 'cmyk';
+                else if (space == ColorSpace.RGB) sp = 'rgb';
+                else if (space == ColorSpace.LAB) sp = 'lab';
+                var v = c.colorValue, vals = [];
+                for (var vi = 0; vi < v.length; vi++) vals.push(Math.round(v[vi] * 100) / 100);
+                res.colors.push({ name: c.name, spot: c.model == ColorModel.SPOT, space: sp, value: vals, rgb: colorRgb(c) });
+            } catch (e) {}
         }
         res.ok = true;
     } catch (e) {

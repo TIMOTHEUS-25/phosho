@@ -3,10 +3,12 @@ const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { Session, searchFolder, findApps } = require('./src/converter');
+const { ProfileStore, parseCsv, toCsv } = require('./src/profiles');
 
 let win = null;
 let session = null;
 let busy = false;
+let profileStore = null; // created once the app is ready (needs userData path)
 
 const ICON = path.join(__dirname, 'renderer', 'assets', 'logo.png');
 const SPLASH_MIN_MS = 2000;
@@ -115,7 +117,10 @@ ipcMain.handle('dialog:searchFolder', async (_e, names) => {
 ipcMain.handle('dialog:saveAs', async (_e, current) => {
   const r = await dialog.showSaveDialog(win, {
     defaultPath: current,
-    filters: [{ name: 'Photoshop document', extensions: ['psd'] }],
+    filters: [
+      { name: 'Photoshop document (PSD)', extensions: ['psd'] },
+      { name: 'Photoshop large document (PSB)', extensions: ['psb'] },
+    ],
   });
   return r.canceled ? null : r.filePath;
 });
@@ -126,11 +131,39 @@ ipcMain.handle('doc:convert', (_e, opts) => guarded(async () => {
   return session.convert({ ...opts, dpi: 300 }, (p) => send('progress', p));
 }));
 
+// ---------- colour profiles ----------
+ipcMain.handle('profiles:load', () => profileStore.load());
+ipcMain.handle('profiles:save', (_e, data) => profileStore.save(data));
+
+ipcMain.handle('profiles:importCsv', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Import brand colours (CSV)',
+    properties: ['openFile'],
+    filters: [{ name: 'Colour list', extensions: ['csv', 'txt', 'tsv'] }],
+  });
+  if (r.canceled) return null;
+  const file = r.filePaths[0];
+  const colors = parseCsv(fs.readFileSync(file, 'utf8'));
+  return { name: path.basename(file, path.extname(file)), colors };
+});
+
+ipcMain.handle('profiles:exportCsv', async (_e, profile) => {
+  const r = await dialog.showSaveDialog(win, {
+    title: 'Export brand colours',
+    defaultPath: (profile.name || 'Colour profile').replace(/[\\/:*?"<>|]/g, '-') + '.csv',
+    filters: [{ name: 'CSV', extensions: ['csv'] }],
+  });
+  if (r.canceled) return null;
+  fs.writeFileSync(r.filePath, toCsv(profile), 'utf8');
+  return r.filePath;
+});
+
 ipcMain.handle('doc:close', () => { closeSession(); return true; });
 
 ipcMain.handle('shell:reveal', (_e, p) => { shell.showItemInFolder(p); return true; });
 
 app.whenReady().then(() => {
+  profileStore = new ProfileStore(path.join(app.getPath('userData'), 'colour-profiles.json'));
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });

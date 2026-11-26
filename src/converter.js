@@ -94,7 +94,9 @@ class Session {
   }
 
   /**
-   * opts: { pageIndexes, relinks: [{id, name, path}], outPath, dpi, openWhenDone, lockLines }
+   * opts: { pageIndexes, relinks: [{id, name, path}], outPath, dpi, openWhenDone, lockLines,
+   *         colourProfile: { name, colors: [{ name, cmyk, rgb }] } | null,
+   *         scale: 0 < n <= 1 (Photoshop resamples the result), scaleBy: 'width' | 'height' }
    */
   async convert(opts, onProgress = () => {}) {
     const progressPath = path.join(this.dir, 'progress.json');
@@ -106,6 +108,7 @@ class Session {
       const extract = await this.withCopy((docPath) => runJsx('indesign', 'id_extract.jsx', {
         docPath, pageIndexes: opts.pageIndexes, relinks: opts.relinks || [],
         outDir: assets, progressPath, dpi, lockLines: opts.lockLines !== false,
+        colourProfile: opts.colourProfile || null,
       }, this.dir, this.apps));
 
       for (const p of extract.pages) for (const l of p.layers) annotatePngs(l.nodes);
@@ -118,7 +121,9 @@ class Session {
 
       const build = await runJsx('photoshop', 'ps_build.jsx', {
         manifestPath, outPath: opts.outPath, progressPath, dpi, openWhenDone: opts.openWhenDone !== false,
-        simulateLock: process.env.IDPS_SIMULATE_LOCK || '', // test hook only
+        scale: opts.scale || 1, scaleBy: opts.scaleBy === 'height' ? 'height' : 'width',
+        simulateLock: process.env.IDPS_SIMULATE_LOCK || '', // test hooks only
+        simulateSaveFail: !!process.env.IDPS_SIMULATE_SAVE_FAIL,
         debug: !!process.env.IDPS_DEBUG,
       }, this.dir, this.apps);
 
@@ -126,6 +131,7 @@ class Session {
         outPath: build.outPath,
         layers: build.layers,
         warnings: [...extract.warnings, ...build.warnings],
+        colourProfile: extract.colourProfile || null,
         missingFonts: build.missingFonts,
         debug: build.debug,
       };

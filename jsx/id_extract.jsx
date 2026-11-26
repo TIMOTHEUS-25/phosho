@@ -12,59 +12,7 @@
     function warn(m) { res.warnings.push(m); }
     function pushAll(arr, more) { for (var i = 0; i < more.length; i++) arr.push(more[i]); }
 
-    // ---------- colour ----------
-    function clamp(v) { return Math.max(0, Math.min(255, Math.round(v))); }
-
-    function labToRgb(L, A, B) {
-        var y = (L + 16) / 116, x = A / 500 + y, z = y - B / 200;
-        function f(t) { return t * t * t > 0.008856 ? t * t * t : (t - 16 / 116) / 7.787; }
-        x = 0.95047 * f(x); y = f(y); z = 1.08883 * f(z);
-        var r = x * 3.2406 + y * -1.5372 + z * -0.4986;
-        var g = x * -0.9689 + y * 1.8758 + z * 0.0415;
-        var b = x * 0.0557 + y * -0.2040 + z * 1.0570;
-        function gm(c) { return c > 0.0031308 ? 1.055 * Math.pow(c, 1 / 2.4) - 0.055 : 12.92 * c; }
-        return [clamp(gm(r) * 255), clamp(gm(g) * 255), clamp(gm(b) * 255)];
-    }
-
-    function colorRgb(c) {
-        try {
-            var name = c.name;
-            if (name === 'None') return null;
-            if (name === 'Paper') return [255, 255, 255];
-            if (name === 'Registration') return [0, 0, 0];
-        } catch (e) {}
-        var ctor = c.constructor.name;
-        if (ctor === 'Tint') return tintRgb(colorRgb(c.baseColor), c.tintValue);
-        if (ctor === 'Gradient') {
-            try { return colorRgb(c.gradientStops[0].stopColor); } catch (e) { return [0, 0, 0]; }
-        }
-        if (ctor === 'MixedInk') return [0, 0, 0];
-        var v = c.colorValue, sp = c.space;
-        try {
-            if (sp != ColorSpace.RGB) {
-                // Colour-managed conversion; InDesign returns RGB in the 0..1 range.
-                var t = app.colorTransform(v, sp, ColorSpace.RGB);
-                if (t && t.length >= 3) {
-                    var m = (t[0] <= 1 && t[1] <= 1 && t[2] <= 1) ? 255 : 1;
-                    return [clamp(t[0] * m), clamp(t[1] * m), clamp(t[2] * m)];
-                }
-            }
-        } catch (e) {}
-        if (sp == ColorSpace.RGB) return [clamp(v[0]), clamp(v[1]), clamp(v[2])];
-        if (sp == ColorSpace.CMYK) {
-            var k = 1 - v[3] / 100;
-            return [clamp(255 * (1 - v[0] / 100) * k), clamp(255 * (1 - v[1] / 100) * k), clamp(255 * (1 - v[2] / 100) * k)];
-        }
-        if (sp == ColorSpace.LAB) return labToRgb(v[0], v[1], v[2]);
-        return [0, 0, 0];
-    }
-
-    function tintRgb(rgb, tint) {
-        if (!rgb) return null;
-        if (tint === undefined || tint < 0 || tint >= 100) return rgb;
-        var t = tint / 100;
-        return [clamp(255 - (255 - rgb[0]) * t), clamp(255 - (255 - rgb[1]) * t), clamp(255 - (255 - rgb[2]) * t)];
-    }
+    // Colour helpers (clamp, colorRgb, tintRgb, profile matching) are in id_common.jsx.
 
     // ---------- geometry ----------
     function resolveSpread(obj, anchor) {
@@ -982,6 +930,67 @@
         try { p.pngExportRange = PNGExportRangeEnum.EXPORT_RANGE; } catch (e) {}
     }
 
+    // ---------- colour profile ----------
+    // Rewrite every CMYK (or spot) colour that the chosen profile lists to the
+    // brand's own RGB values, in the working copy only. Text, fills, strokes,
+    // gradients, effects and rasterized shapes all pick the new values up.
+    // [Black] can't be edited, so whatever uses it is moved to an RGB copy.
+    function applyColourProfile() {
+        var prof = PARAMS.colourProfile;
+        if (!prof || !prof.colors || !prof.colors.length) return;
+        var cols = doc.colors.everyItem().getElements(), applied = [];
+        for (var i = 0; i < cols.length; i++) {
+            var c = cols[i], name = '';
+            try {
+                if (c.constructor.name !== 'Color') continue;
+                name = c.name;
+                if (/^(None|Paper|Registration)$/.test(name) || c.model == ColorModel.REGISTRATION) continue;
+                var hit = profileMatch(name, c.space, c.colorValue);
+                if (!hit) continue;
+                var rgb = hit.rgb.slice(0, 3);
+                try { c.space = ColorSpace.RGB; c.colorValue = rgb; }
+                catch (e) {
+                    if (name !== 'Black') throw e;
+                    replaceBlack(c, rgb);
+                }
+                applied.push(name || hit.name || 'Unnamed colour');
+            } catch (e) {
+                warn('Could not apply the brand RGB value to the colour "' + (name || 'Unnamed') + '": ' + errText(e) + '. It uses the standard conversion.');
+            }
+        }
+        res.colourProfile = { name: prof.name || '', applied: applied };
+    }
+
+    function replaceBlack(black, rgb) {
+        var nc = doc.colors.add({ name: 'Black (brand RGB)', model: ColorModel.PROCESS, space: ColorSpace.RGB, colorValue: rgb });
+        var props = ['fillColor', 'strokeColor'];
+        function swap(o) {
+            for (var p = 0; p < props.length; p++) {
+                try {
+                    if (o[props[p]].name !== 'Black') continue;
+                    var tp = props[p].replace('Color', 'Tint'), tint = o[tp];
+                    o[props[p]] = nc;
+                    try { if (tint >= 0) o[tp] = tint; } catch (e) {}
+                } catch (e) {}
+            }
+        }
+        // Frames, shapes and lines (on pages and parent pages).
+        var items = doc.allPageItems;
+        for (var i = 0; i < items.length; i++) swap(items[i]);
+        try { var cells = doc.stories.everyItem().tables.everyItem().cells.everyItem().getElements(); for (var c = 0; c < cells.length; c++) swap(cells[c]); } catch (e) {}
+        // Text, by Find/Change (it handles paragraph and character styles).
+        try { app.findChangeTextOptions.includeMasterPages = true; app.findChangeTextOptions.includeHiddenLayers = true; app.findChangeTextOptions.includeLockedStoriesForFind = true; app.findChangeTextOptions.includeLockedLayersForFind = true; } catch (e) {}
+        try {
+            for (var k = 0; k < props.length; k++) {
+                app.findTextPreferences = app.changeTextPreferences = NothingEnum.NOTHING;
+                app.findTextPreferences[props[k]] = 'Black'; app.changeTextPreferences[props[k]] = nc.name;
+                doc.changeText();
+            }
+        } finally {
+            app.findTextPreferences = app.changeTextPreferences = NothingEnum.NOTHING;
+        }
+    }
+
     try {
         doc = idOpen(PARAMS.docPath);
         progress('indesign', 0, 1, 'Preparing document');
@@ -1006,6 +1015,7 @@
             try { if (allLinks[u].status == LinkStatus.LINK_OUT_OF_DATE) allLinks[u].update(); } catch (e) {}
         }
 
+        applyColourProfile();
         setPngPrefs();
         var total = PARAMS.pageIndexes.length;
         for (var pi = 0; pi < total; pi++) {

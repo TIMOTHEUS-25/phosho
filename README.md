@@ -43,6 +43,26 @@ On first use, macOS asks whether "PhoSho!" may control InDesign and Photoshop. C
 | Feathers (basic, directional, gradient) | On placed images, a **layer mask** with the same fade (the image stays a smart object). On text, a gradient feather becomes a layer mask; basic and directional feathers on text are left off, and you'll see a note. On shapes they are baked into the pixels. |
 | Opacity and blend mode | Layer opacity and blend mode |
 
+## Size
+
+The **Size** option on the main screen makes the finished artwork smaller, in Photoshop:
+
+- **Full size**: 300 ppi, the default.
+- **Reduce by percentage**: 1–100% of full size.
+- **Set pixel size**: a width or a height in pixels; the other side follows the aspect ratio. With several pages selected, the largest one gets the exact size and the rest shrink by the same amount.
+
+The screen shows the resulting pixel size before you convert. Photoshop resamples the finished document with *Scale Styles* on, so shadows, strokes and masks shrink with it. The ppi drops by the same amount (50% gives 150 ppi), so text keeps its InDesign point sizes and stays editable. Embedded images keep their full resolution inside their smart objects, so the file on disk doesn't shrink as much as the pixel size.
+
+## Brand colours (colour profiles)
+
+A straight CMYK → RGB conversion rarely gives a brand's official RGB values. Pick a **Colour profile** on the main screen and every colour in the document that the profile lists uses the brand's RGB value instead.
+
+- **Matching:** a document colour matches when its CMYK values are the same (in whole percentages), or when its swatch name is the same, which is handy for Pantone spot colours. Colours that are already RGB are left alone. Unlisted colours use the standard conversion.
+- **What changes:** text, fills, strokes, gradients, effect colours and rasterized shapes, including tints (a 30% tint of a brand colour is 30% of the brand RGB). InDesign's built-in [Black] is included, so K100 can become your brand black.
+- **What doesn't:** placed images and artwork (PSD, TIFF, AI, PDF…) keep the colours inside their own files.
+- **Making a profile:** click **Edit profiles…**. Type colours in, use **Add this document's colours** to start from the open file, or **Import CSV…** from a brand guide spreadsheet: a header row with `Name, C, M, Y, K` and either `R, G, B` or `Hex` (comma, semicolon or tab separated). **Export CSV…** shares a profile with the team.
+- The panel under the dropdown shows which of the document's colours matched before you convert, and the result screen lists the colours that were changed. Your InDesign file is never modified.
+
 ## Good to know
 
 - **Fonts:** Photoshop needs the same fonts installed. Fonts that only exist in an InDesign "Document Fonts" folder must be installed on the system first. Missing fonts are listed before and after conversion. The text stays editable regardless.
@@ -51,7 +71,7 @@ On first use, macOS asks whether "PhoSho!" may control InDesign and Photoshop. C
 - **Folder names:** a group named in InDesign's Layers panel keeps that name. Otherwise the folder takes the name of its object style, or its biggest text ("Card title group"), or its first image. When folders are nested, the outer one says what it adds ("Card title group + 1 more"). Unnamed shapes are named by type and fill swatch or object style, such as "Rectangle · Brand Red".
 - **Rasterized instead of live text:** text frames that contain tables, and vertical text, are rasterized (you'll see a note). Multi-column frames become a single text box.
 - **Locked linked files:** if Photoshop reports a linked file as locked (common on servers, or when another app has the file open), the app waits and retries. If the file still can't be read, InDesign's preview is used instead and the result screen tells you which ones. Use *Layer → Smart Objects → Replace Contents* later.
-- **Very large documents:** if all the artboards together exceed 30,000 px, the file is saved as `.psb`, Photoshop's large-document format.
+- **PSB (large documents):** if all the artboards together exceed 30,000 px, or Photoshop can't save the PSD for any other reason (a PSD can't be bigger than 2 GB), the file is saved as `.psb`, Photoshop's large-document format, and the result screen says why. An existing PSB of the same name is never overwritten. You can also choose PSB yourself under *Change…* next to the file name.
 - **Your original file is never modified.** The app works on a temporary copy that is deleted straight away.
 - **Effects on a frame with a fill:** InDesign applies object effects to the frame as a whole. Shadows and outer glows go on the frame's fill layer (the bottom layer), and inner effects go on the image. On a filled text frame, all of them go on the background, as InDesign draws them. Satin can look slightly different because Photoshop uses a different contour.
 - Avoid using InDesign or Photoshop while a conversion is running.
