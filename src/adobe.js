@@ -2,11 +2,61 @@
 // Windows (COM via PowerShell).
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const os = require('os');
+const { execFile, execFileSync } = require('child_process');
 
 const JSX_DIR = path.join(__dirname, '..', 'jsx').replace('app.asar', 'app.asar.unpacked');
 const IS_MAC = process.platform === 'darwin';
 const IS_WIN = process.platform === 'win32';
+
+const BUNDLE_IDS = { indesign: 'com.adobe.InDesign', photoshop: 'com.adobe.Photoshop' };
+
+function plistValue(appPath, key) {
+  try {
+    return execFileSync('plutil', ['-extract', key, 'raw', '-o', '-', path.join(appPath, 'Contents', 'Info.plist')],
+      { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch { return ''; }
+}
+
+// macOS: every real InDesign / Photoshop app on the machine, checked by bundle
+// id, so leftover "Adobe InDesign 20xx" folders without the app (common after
+// uninstalling a version) are never picked. Looks in /Applications,
+// ~/Applications and asks Spotlight, then takes the newest.
+function findMacApp(kind) {
+  const id = BUNDLE_IDS[kind];
+  const label = kind === 'indesign' ? 'InDesign' : 'Photoshop';
+  const seen = new Set(), found = [];
+  const consider = (appPath) => {
+    if (!appPath || seen.has(appPath) || !/\.app$/.test(appPath) || /\/\.Trash\//.test(appPath)) return;
+    seen.add(appPath);
+    if (plistValue(appPath, 'CFBundleIdentifier') !== id) return;
+    const name = path.basename(appPath, '.app');
+    const m = name.match(/(\d{4})/);
+    const version = plistValue(appPath, 'CFBundleShortVersionString');
+    found.push({ name, year: m ? parseInt(m[1], 10) : 0, dir: path.dirname(appPath), app: appPath, version });
+  };
+  for (const root of ['/Applications', path.join(os.homedir(), 'Applications')]) {
+    let names = [];
+    try { names = fs.readdirSync(root); } catch { continue; }
+    for (const n of names) {
+      if (!new RegExp('^Adobe ' + label + '\\b', 'i').test(n)) continue;
+      const full = path.join(root, n);
+      if (n.endsWith('.app')) { consider(full); continue; }
+      let inner = [];
+      try { inner = fs.readdirSync(full); } catch { continue; }
+      for (const f of inner) if (f.endsWith('.app')) consider(path.join(full, f));
+    }
+  }
+  if (!found.length) {
+    try {
+      execFileSync('mdfind', [`kMDItemCFBundleIdentifier == '${id}'`], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
+        .split('\n').forEach((l) => consider(l.trim()));
+    } catch {}
+  }
+  const major = (v) => parseInt(String(v).split('.')[0], 10) || 0;
+  found.sort((a, b) => (b.year - a.year) || (major(b.version) - major(a.version)));
+  return found[0] || null;
+}
 
 function findApps() {
   const found = { indesign: null, photoshop: null };
@@ -25,8 +75,8 @@ function findApps() {
     return best;
   };
   if (IS_MAC) {
-    found.indesign = pick(/^Adobe InDesign (\d{4})$/, ['/Applications']);
-    found.photoshop = pick(/^Adobe Photoshop (\d{4})$/, ['/Applications']);
+    found.indesign = findMacApp('indesign');
+    found.photoshop = findMacApp('photoshop');
   } else if (IS_WIN) {
     const roots = [process.env['ProgramFiles'], process.env['ProgramFiles(x86)']]
       .filter(Boolean).map((p) => path.join(p, 'Adobe'));
@@ -78,10 +128,22 @@ async function runJsx(target, scriptName, params, workDir, apps) {
 
   if (IS_MAC) {
     const info = apps[target];
-    if (!info) throw new Error(`Adobe ${target === 'indesign' ? 'InDesign' : 'Photoshop'} was not found in /Applications.`);
+    const label = target === 'indesign' ? 'InDesign' : 'Photoshop';
+    if (!info || !info.app) throw new Error(`Adobe ${label} was not found on this Mac. Install it with Creative Cloud, then try again.`);
     const verb = target === 'indesign' ? `do script "${js}" language javascript` : `do javascript "${js}"`;
-    const as = `with timeout of 86400 seconds\ntell application "${info.name}"\n${verb}\nend tell\nend timeout`;
-    await run('osascript', ['-e', as]);
+    // Address the app by its full path, not its name: a name can match a
+    // leftover folder or another copy, and then AppleScript can't load the
+    // app's dictionary ("Expected end of line but found ..." -2741).
+    const appRef = info.app.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const as = `with timeout of 86400 seconds\ntell application "${appRef}"\n${verb}\nend tell\nend timeout`;
+    try {
+      await run('osascript', ['-e', as]);
+    } catch (e) {
+      if (/-2741|-1728|-600|-10814|Can.t get application|isn.t running/i.test(e.message)) {
+        throw new Error(`PhoSho! couldn't talk to Adobe ${label} at ${info.app}. Open ${label} once by itself (and sign in to Creative Cloud if it asks), quit it, then try again. (${e.message})`);
+      }
+      throw e;
+    }
   } else if (IS_WIN) {
     const jsPs = js.replace(/'/g, "''");
     const prog = target === 'indesign' ? 'InDesign.Application' : 'Photoshop.Application';
