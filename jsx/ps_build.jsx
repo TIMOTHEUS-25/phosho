@@ -55,10 +55,9 @@
         return ab;
     }
 
-    function placeFile(path, linked, pdfPage, pdfCrop) {
+    function placeFile(path, pdfPage, pdfCrop) {
         var d = new ActionDescriptor();
         d.putPath(c('null'), new File(path));
-        if (linked) d.putBoolean(s('linked'), true);
         if (pdfPage) {
             var as = new ActionDescriptor();
             as.putEnumerated(c('fsel'), s('pdfSelection'), s('page'));
@@ -516,22 +515,16 @@
     }
 
     // ---------- placement ----------
-    function relinkActiveToFile(path) {
-        var d = new ActionDescriptor();
-        d.putPath(c('null'), new File(path));
-        executeAction(s('placedLayerRelinkToFile'), d, DialogModes.NO);
-    }
-
-    // Place a linked file. If Photoshop reports the file as locked (server
-    // locks, or another app such as InDesign holding it open), wait and retry;
-    // then fall back to embedding the full-resolution original and relinking
-    // it to the same path; if that relink is refused, keep the embedded copy.
-    function placeLinkedRobust(n, container) {
+    // Place a copy of the original file as an EMBEDDED smart object, never a
+    // linked one, so editing the PSD can't overwrite artwork that InDesign
+    // references. If Photoshop reports the file as locked (server locks, or
+    // another app such as InDesign holding it open), wait and retry.
+    function placeEmbeddedRobust(n, container) {
         var lastErr = null;
         for (var attempt = 0; attempt < 3; attempt++) {
             try {
                 if (PARAMS.simulateLock) throw new Error('Could not complete the command because the file is locked.');
-                return { layer: placeFile(n.path, true, n.pdfPage, n.pdfCrop), how: 'linked' };
+                return placeFile(n.path, n.pdfPage, n.pdfCrop);
             }
             catch (e) {
                 lastErr = e;
@@ -540,14 +533,7 @@
                 $.sleep(1500);
             }
         }
-        doc.activeLayer = container;
-        var layer = placeFile(n.path, false, n.pdfPage, n.pdfCrop); // throws -> caller uses the InDesign preview
-        try {
-            if (PARAMS.simulateLock === 'all') throw new Error('Could not complete the command because the file is locked.');
-            relinkActiveToFile(n.path);
-            return { layer: doc.activeLayer, how: 'relinked' };
-        }
-        catch (e2) { return { layer: layer, how: 'embedded', err: lastErr }; }
+        throw lastErr; // caller uses the InDesign preview
     }
 
     // Show/hide layers inside the active embedded smart object, matching
@@ -576,31 +562,25 @@
 
     function placeImage(n, ox, oy, container) {
         var gm = frameGeometry(n.corners, ox, oy);
-        var r;
+        var layer;
         if (n.layerVis) {
-            // Photoshop can't show different layers per linked copy, so this
-            // placement is embedded (full file, all layers) with InDesign's
-            // layer choices applied inside it.
-            r = { layer: placeFile(n.path, false), how: 'layers' };
+            // Match InDesign's Object Layer Options inside the smart object.
+            layer = placeFile(n.path);
             var missing = applyLayerVisibility(n.layerVis);
-            warn('"' + n.name + '" shows only some of its layers in InDesign (Object Layer Options). Photoshop can\'t do that per linked copy, so it was embedded with the same layers shown; all layers are still inside the smart object. Original file: ' + n.path);
             if (missing.length) warn('In "' + n.name + '" these layers weren\'t found in the file, so their visibility could not be set: ' + missing.join(', ') + '.');
         } else {
-            r = placeLinkedRobust(n, container);
+            layer = placeEmbeddedRobust(n, container);
         }
-        var q = soQuad(r.layer);
+        var q = soQuad(layer);
         transformActive(gm.cx - q.cx, gm.cy - q.cy, gm.w / q.w * 100, (gm.flip ? -1 : 1) * gm.h / q.h * 100, 0);
         shapeActive(gm, true);
         nudgeTo(doc.activeLayer, gm.cx, gm.cy);
         addVectorMask(n.clip, ox, oy);
-        if (r.how === 'embedded') {
-            warn('"' + n.name + '" could not be linked (' + errText(r.err).replace(/\s+/g, ' ') + '). It was embedded at full resolution instead; use Layer > Smart Objects > Relink to File later to link it again.');
-        }
         return doc.activeLayer;
     }
 
     function placeRaster(n, ox, oy) {
-        var layer = placeFile(n.png, false);
+        var layer = placeFile(n.png);
         var q = soQuad(layer);
         var b = n.bounds;
         var cx = ox + (b[1] + b[3]) / 2 * S, cy = oy + (b[0] + b[2]) / 2 * S;
@@ -680,7 +660,7 @@
             removeStray(container);
             layer = null;
             if (n.kind === 'image' && n.fallback) {
-                warn('Could not place "' + n.name + '" from its linked file (' + errText(e).replace(/\s+/g, ' ') + '). It was rasterized into a smart object from InDesign\'s preview instead.');
+                warn('Could not place "' + n.name + '" from its original file (' + errText(e).replace(/\s+/g, ' ') + '). It was rasterized into a smart object from InDesign\'s preview instead.');
                 try { doc.activeLayer = lastIn[container.id] || container; layer = placeRaster(n.fallback, ox, oy); n.name = n.fallback.name; n.fx = n.fallback.fx; n.opacity = n.fallback.opacity; n.blend = n.fallback.blend; }
                 catch (e2) { removeStray(container); warn('Failed to place fallback for "' + n.name + '": ' + errText(e2)); }
             } else {

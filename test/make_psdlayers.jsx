@@ -24,7 +24,7 @@ try {
     var shadow = place('Product shadow', 'Shadow');
     shadow.transparencySettings.blendingSettings.blendMode = BlendMode.MULTIPLY;
     place('Product', 'Product');
-    // A third copy with untouched layer visibility: must stay a linked smart object.
+    // A third copy with untouched layer visibility: placed as an embedded smart object like every image.
     var plain = p.rectangles.add({ geometricBounds: [100, 260, 244, 404], strokeWeight: 0, name: 'Product as saved' });
     plain.place(File(DIR + '/product.psd')); plain.fit(FitOptions.CONTENT_TO_FRAME);
     doc.save(File(DIR + '/psdlayers.indd'));

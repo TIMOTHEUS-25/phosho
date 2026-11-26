@@ -198,7 +198,7 @@ function renderLinks() {
   if (!problems.length) {
     panel.className = 'panel good';
     panel.innerHTML = links.length
-      ? `<h3>Links</h3><div class="muted">All ${links.filter((l) => l.status !== 'embedded').length} linked files found. They stay linked in Photoshop.</div>`
+      ? `<h3>Links</h3><div class="muted">All ${links.filter((l) => l.status !== 'embedded').length} linked files found. Each is copied into Photoshop as an embedded smart object, so your originals are never changed.</div>`
       : '';
     return;
   }

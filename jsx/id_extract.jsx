@@ -832,7 +832,7 @@
             imgFx = fillNode ? mergeFx(imgFx, pickFx(objFx.fx, OUTER_FX, true)) : mergeFx(imgFx, objFx.fx);
             var imgMask = featherMask(frame, ctx, false);
             var lost = gFx.unmapped.concat(cFx.unmapped);
-            if (lost.length) warn('"' + baseName + '" on page ' + ctx.page.name + ' uses a ' + lost.join(' and ') + ', which can\'t be applied to a linked smart object. Add a layer mask in Photoshop if you need it.');
+            if (lost.length) warn('"' + baseName + '" on page ' + ctx.page.name + ' uses a ' + lost.join(' and ') + ', which can\'t be applied to a placed smart object. Add a layer mask in Photoshop if you need it.');
             var node = { kind: 'image', name: baseName, path: path, hidden: !!hidden,
                          corners: corners(g, ctx), clip: clipPaths(frame, ctx),
                          opacity: objFx.opacity * gFx.opacity * cFx.opacity / 10000,
